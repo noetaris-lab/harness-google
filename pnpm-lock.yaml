@@ -8,6 +8,12 @@ importers:
 
   .:
     devDependencies:
+      '@noetaris/harness':
+        specifier: link:../core
+        version: link:../core
+      '@noetaris/harness-types':
+        specifier: link:../types
+        version: link:../types
       '@types/node':
         specifier: ^25.8.0
         version: 25.8.0
