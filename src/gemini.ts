@@ -1,0 +1,163 @@
+import { randomUUID } from 'node:crypto'
+import type { LLM, Message, Tool, ToolCall, LLMResponse, LLMUsageEvent } from '@noetaris/harness-types'
+import type { ObserverAware, Observer, StepContext } from '@noetaris/harness'
+import { GoogleGenerativeAI } from '@google/generative-ai'
+import type {
+  Content,
+  FunctionDeclaration,
+  FunctionDeclarationSchema,
+  Part,
+} from '@google/generative-ai'
+
+export interface GeminiOptions {
+  apiKey?: string
+}
+
+function translateMessages(messages: Message[]): Content[] {
+  const result: Content[] = []
+  let lastAssistantToolCalls: ToolCall[] | undefined
+
+  for (const msg of messages) {
+    if (msg.role === 'user') {
+      result.push({ role: 'user', parts: [{ text: msg.content }] })
+    } else if (msg.role === 'assistant') {
+      lastAssistantToolCalls = msg.toolCalls
+      const parts: Part[] = []
+      if (msg.content) {
+        parts.push({ text: msg.content })
+      }
+      if (msg.toolCalls) {
+        for (const tc of msg.toolCalls) {
+          parts.push({
+            functionCall: {
+              name: tc.name,
+              // as: ToolCall.input is unknown; Google SDK args expects Record<string,unknown>
+              args: tc.input as Record<string, unknown>,
+            },
+          })
+        }
+      }
+      result.push({ role: 'model', parts })
+    } else if (msg.role === 'tool') {
+      const matchedTc = lastAssistantToolCalls?.find((tc) => tc.id === msg.toolCallId)
+      const name = matchedTc?.name ?? msg.toolCallId
+      const responsePart: Part = {
+        functionResponse: {
+          name,
+          response: { result: msg.content },
+        },
+      }
+
+      const last = result[result.length - 1]
+      if (last !== undefined && last.role === 'user') {
+        last.parts.push(responsePart)
+      } else {
+        result.push({ role: 'user', parts: [responsePart] })
+      }
+    }
+  }
+
+  return result
+}
+
+function translateTools(tools: Tool[]): FunctionDeclaration[] {
+  return tools.map((t) => {
+    // as: harness Tool.inputSchema is Record<string,unknown>; SDK's FunctionDeclarationSchema
+    // has required 'type' and 'properties' — at runtime the schema is always a valid object schema
+    const decl: FunctionDeclaration = {
+      name: t.name,
+      description: t.description,
+      parameters: t.inputSchema as unknown as FunctionDeclarationSchema,
+    }
+    return decl
+  })
+}
+
+function normalizeResponse(parts: Part[], finishReason: string | undefined): LLMResponse {
+  let text = ''
+  const toolCalls: ToolCall[] = []
+
+  for (const part of parts) {
+    if ('text' in part && typeof part.text === 'string') {
+      text += part.text
+    } else if ('functionCall' in part && part.functionCall !== undefined) {
+      toolCalls.push({
+        id: randomUUID(),
+        name: part.functionCall.name,
+        input: part.functionCall.args,
+      })
+    }
+  }
+
+  let stopReason: LLMResponse['stopReason']
+  if (toolCalls.length > 0) {
+    stopReason = 'tool_use'
+  } else if (finishReason === 'MAX_TOKENS') {
+    stopReason = 'max_tokens'
+  } else {
+    stopReason = 'end'
+  }
+
+  return { text, toolCalls, stopReason }
+}
+
+const ZEROED_STEP_CONTEXT: StepContext = { agentId: '', sessionId: '', stepName: '' }
+
+export class Gemini implements LLM, ObserverAware {
+  // as: GoogleGenerativeAI.getGenerativeModel() returns GenerativeModel which is not exported as a named type
+  private readonly sdkModel: ReturnType<GoogleGenerativeAI['getGenerativeModel']>
+  private readonly modelId: string
+  private observer: Observer = {}
+  private stepContext: StepContext = ZEROED_STEP_CONTEXT
+
+  constructor(model: string, options?: GeminiOptions) {
+    this.modelId = model
+    const genAI = new GoogleGenerativeAI(options?.apiKey ?? process.env['GEMINI_API_KEY'] ?? '')
+    this.sdkModel = genAI.getGenerativeModel({ model })
+  }
+
+  bindObserver(observer: Observer): void {
+    this.observer = observer
+  }
+
+  setStepContext(ctx: StepContext): void {
+    this.stepContext = ctx
+  }
+
+  async invoke(messages: Message[], options?: { tools?: Tool[] }): Promise<LLMResponse> {
+    const contents = translateMessages(messages)
+    const tools = options?.tools
+
+    const sdkResult = await this.sdkModel.generateContent({
+      contents,
+      ...(tools !== undefined ? { tools: [{ functionDeclarations: translateTools(tools) }] } : {}),
+    })
+
+    const response = sdkResult.response
+    const candidates = response.candidates
+
+    if (!candidates || candidates.length === 0) {
+      throw new Error('Gemini response contained no candidates')
+    }
+
+    // noUncheckedIndexedAccess: guarded by the length check above
+    const firstCandidate = candidates[0] as NonNullable<typeof candidates[0]>
+    const parts = firstCandidate.content.parts
+    const finishReason = firstCandidate.finishReason
+
+    const result = normalizeResponse(parts, finishReason)
+
+    const usageMetadata = response.usageMetadata
+    const event: LLMUsageEvent = {
+      tokens: {
+        input: usageMetadata?.promptTokenCount ?? 0,
+        output: usageMetadata?.candidatesTokenCount ?? 0,
+      },
+      modelId: this.modelId,
+      stopReason: result.stopReason,
+    }
+    this.observer.onEvent?.(this.stepContext, 'llm.response', event)
+
+    return result
+  }
+}

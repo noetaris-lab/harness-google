@@ -1,2 +1,3 @@
-// @noetaris/harness-google — stub; implementation in F22
-export {}
+export { Gemini } from './gemini.js'
+export type { GeminiOptions } from './gemini.js'
+export { MockGemini, MockGeminiEmptyQueueError } from './mock-gemini.js'
