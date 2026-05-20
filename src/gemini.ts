@@ -9,7 +9,9 @@ import type {
   Part,
 } from '@google/generative-ai'
 
+/** Options for {@link Gemini}. */
 export interface GeminiOptions {
+  /** Google AI API key. Defaults to the `GEMINI_API_KEY` environment variable. */
   apiKey?: string
 }
 
@@ -103,6 +105,18 @@ function normalizeResponse(parts: Part[], finishReason: string | undefined): LLM
 
 const ZEROED_STEP_CONTEXT: StepContext = { agentId: '', sessionId: '', stepName: '' }
 
+/**
+ * {@link LLM} adapter for the Google Generative AI (Gemini) API.
+ *
+ * Implements {@link ObserverAware} — emits an `'llm.response'` event with an
+ * `LLMUsageEvent` payload after each successful invocation.
+ *
+ * @example
+ * ```ts
+ * const llm = new Gemini('gemini-2.0-flash')
+ * const response = await llm.invoke(messages)
+ * ```
+ */
 export class Gemini implements LLM, ObserverAware {
   // as: GoogleGenerativeAI.getGenerativeModel() returns GenerativeModel which is not exported as a named type
   private readonly sdkModel: ReturnType<GoogleGenerativeAI['getGenerativeModel']>
@@ -110,6 +124,10 @@ export class Gemini implements LLM, ObserverAware {
   private observer: Observer = {}
   private stepContext: StepContext = ZEROED_STEP_CONTEXT
 
+  /**
+   * @param model - Gemini model ID, e.g. `'gemini-2.0-flash'`.
+   * @param options - Optional API key override.
+   */
   constructor(model: string, options?: GeminiOptions) {
     this.modelId = model
     const genAI = new GoogleGenerativeAI(options?.apiKey ?? process.env['GEMINI_API_KEY'] ?? '')
