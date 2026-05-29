@@ -173,6 +173,7 @@ export class Gemini implements LLM, ObserverAware {
       },
       modelId: this.modelId,
       stopReason: result.stopReason,
+      providerName: 'google',
     }
     this.observer.onEvent?.(this.stepContext, 'llm.response', event)
 

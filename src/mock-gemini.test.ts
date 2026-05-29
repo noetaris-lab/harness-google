@@ -153,7 +153,7 @@ describe('MockGemini', () => {
 
       // assert
       expect(onEvent).toHaveBeenCalledOnce()
-      expect(onEvent).toHaveBeenCalledWith(ctx, 'llm.response', { tokens: { input: 0, output: 0 }, modelId: 'mock', stopReason: 'end' })
+      expect(onEvent).toHaveBeenCalledWith(ctx, 'llm.response', { tokens: { input: 0, output: 0 }, modelId: 'mock', stopReason: 'end', providerName: 'mock' })
     })
 
     it('uses StepContext from setStepContext as first arg to onEvent', async () => {

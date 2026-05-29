@@ -70,6 +70,7 @@ export class MockGemini implements LLM, ObserverAware {
       tokens:     { input: 0, output: 0 },
       modelId:    'mock',
       stopReason: response.stopReason,
+      providerName: 'mock',
     }
     this.observer.onEvent?.(this.stepContext, 'llm.response', event)
 

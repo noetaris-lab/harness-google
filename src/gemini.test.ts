@@ -423,7 +423,7 @@ describe('Gemini', () => {
       expect(observer.onEvent).toHaveBeenCalledWith(
         { agentId: 'ag1', sessionId: 's1', stepName: 'step1' },
         'llm.response',
-        { tokens: { input: 15, output: 7 }, modelId: 'gemini-1.5-pro', stopReason: 'end' },
+        { tokens: { input: 15, output: 7 }, modelId: 'gemini-1.5-pro', stopReason: 'end', providerName: 'google' },
       )
     })
 
