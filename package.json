@@ -1,6 +1,6 @@
 {
   "name": "@noetaris/harness-google",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Google Gemini adapter for @noetaris/harness",
   "type": "module",
   "repository": {
