@@ -558,6 +558,211 @@ describe('Gemini', () => {
 
   })
 
+  describe('thought signature handling', () => {
+
+    it('caches thoughtSignature from a functionCall Part and re-attaches it on the next invoke', async () => {
+      // arrange — turn 1 response: functionCall part with thoughtSignature at Part level
+      const toolCallId = 'call_abc'
+      mockGenerateContent.mockResolvedValueOnce({
+        candidates: [{
+          content: {
+            parts: [{
+              functionCall: { id: toolCallId, name: 'get_date', args: {} },
+              thoughtSignature: 'SIG_BLOB',
+            }],
+          },
+          finishReason: 'STOP',
+        }],
+        usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 3 },
+      })
+      mockGenerateContent.mockResolvedValueOnce(minimalTextResponse)
+
+      const gemini = new Gemini('gemini-2.5-flash', { apiKey: 'key' })
+      gemini.bindObserver({})
+
+      // act — turn 1
+      const r1 = await gemini.invoke([{ role: 'user', content: 'what day is it?' }], {
+        tools: [{ name: 'get_date', description: 'get date', inputSchema: {} }],
+      })
+
+      // assert turn 1 result
+      expect(r1.stopReason).toBe('tool_use')
+      expect(r1.toolCalls[0]?.id).toBe(toolCallId)
+
+      // act — turn 2: send tool result back including the assistant message
+      await gemini.invoke([
+        { role: 'user', content: 'what day is it?' },
+        { role: 'assistant', toolCalls: r1.toolCalls },
+        { role: 'tool', toolCallId: r1.toolCalls[0]!.id, content: '2026-06-01' },
+      ])
+
+      // assert — the functionCall Part sent in turn 2 must carry thoughtSignature
+      const turn2Contents = mockGenerateContent.mock.calls[1]![0].contents as { role: string; parts: { functionCall?: unknown; thoughtSignature?: string }[] }[]
+      const modelContent = turn2Contents.find(c => c.role === 'model')
+      expect(modelContent).toBeDefined()
+      const fcPart = modelContent!.parts[0]!
+      expect(fcPart.thoughtSignature).toBe('SIG_BLOB')
+    })
+
+    it('falls back to standalone thoughtSignature part when the functionCall Part itself has no signature', async () => {
+      // arrange — turn 1: separate standalone signature part, then functionCall part
+      const toolCallId = 'call_xyz'
+      mockGenerateContent.mockResolvedValueOnce({
+        candidates: [{
+          content: {
+            parts: [
+              { thoughtSignature: 'STANDALONE_SIG' },                              // standalone
+              { functionCall: { id: toolCallId, name: 'search', args: { q: 'x' } } }, // no direct sig
+            ],
+          },
+          finishReason: 'STOP',
+        }],
+        usageMetadata: { promptTokenCount: 4, candidatesTokenCount: 2 },
+      })
+      mockGenerateContent.mockResolvedValueOnce(minimalTextResponse)
+
+      const gemini = new Gemini('gemini-2.5-flash', { apiKey: 'key' })
+      gemini.bindObserver({})
+
+      // act — turn 1
+      const r1 = await gemini.invoke([{ role: 'user', content: 'search for x' }], {
+        tools: [{ name: 'search', description: 'search', inputSchema: {} }],
+      })
+      expect(r1.toolCalls[0]?.id).toBe(toolCallId)
+
+      // act — turn 2
+      await gemini.invoke([
+        { role: 'user', content: 'search for x' },
+        { role: 'assistant', toolCalls: r1.toolCalls },
+        { role: 'tool', toolCallId: r1.toolCalls[0]!.id, content: 'results' },
+      ])
+
+      // assert — standalone signature propagated to the functionCall Part in turn 2
+      const turn2Contents = mockGenerateContent.mock.calls[1]![0].contents as { role: string; parts: { thoughtSignature?: string }[] }[]
+      const modelContent = turn2Contents.find(c => c.role === 'model')!
+      expect(modelContent.parts[0]!.thoughtSignature).toBe('STANDALONE_SIG')
+    })
+
+    it('does not attach thoughtSignature when none was present in the response', async () => {
+      // arrange — turn 1: functionCall with no thoughtSignature
+      mockGenerateContent.mockResolvedValueOnce({
+        candidates: [{
+          content: { parts: [{ functionCall: { id: 'call_1', name: 'tool', args: {} } }] },
+          finishReason: 'STOP',
+        }],
+        usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 2 },
+      })
+      mockGenerateContent.mockResolvedValueOnce(minimalTextResponse)
+
+      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'key' })
+      gemini.bindObserver({})
+
+      const r1 = await gemini.invoke([{ role: 'user', content: 'go' }], {
+        tools: [{ name: 'tool', description: 'tool', inputSchema: {} }],
+      })
+
+      // act — turn 2
+      await gemini.invoke([
+        { role: 'user', content: 'go' },
+        { role: 'assistant', toolCalls: r1.toolCalls },
+        { role: 'tool', toolCallId: r1.toolCalls[0]!.id, content: 'done' },
+      ])
+
+      // assert — no thoughtSignature field on the Part
+      const turn2Contents = mockGenerateContent.mock.calls[1]![0].contents as { role: string; parts: { functionCall?: unknown; thoughtSignature?: string }[] }[]
+      const modelContent = turn2Contents.find(c => c.role === 'model')!
+      expect('thoughtSignature' in modelContent.parts[0]!).toBe(false)
+    })
+
+    it('caches signatures for each tool call independently when response has multiple functionCall parts', async () => {
+      // arrange — response with two functionCall parts each with their own signature
+      mockGenerateContent.mockResolvedValueOnce({
+        candidates: [{
+          content: {
+            parts: [
+              { functionCall: { id: 'id_a', name: 'tool_a', args: {} }, thoughtSignature: 'SIG_A' },
+              { functionCall: { id: 'id_b', name: 'tool_b', args: {} }, thoughtSignature: 'SIG_B' },
+            ],
+          },
+          finishReason: 'STOP',
+        }],
+        usageMetadata: { promptTokenCount: 6, candidatesTokenCount: 4 },
+      })
+      mockGenerateContent.mockResolvedValueOnce(minimalTextResponse)
+
+      const gemini = new Gemini('gemini-2.5-flash', { apiKey: 'key' })
+      gemini.bindObserver({})
+
+      const r1 = await gemini.invoke([{ role: 'user', content: 'both' }], {
+        tools: [
+          { name: 'tool_a', description: 'a', inputSchema: {} },
+          { name: 'tool_b', description: 'b', inputSchema: {} },
+        ],
+      })
+      expect(r1.toolCalls).toHaveLength(2)
+
+      // act — turn 2
+      await gemini.invoke([
+        { role: 'user', content: 'both' },
+        { role: 'assistant', toolCalls: r1.toolCalls },
+        { role: 'tool', toolCallId: 'id_a', content: 'result_a' },
+        { role: 'tool', toolCallId: 'id_b', content: 'result_b' },
+      ])
+
+      // assert — each Part carries its own signature
+      const turn2Contents = mockGenerateContent.mock.calls[1]![0].contents as { role: string; parts: { thoughtSignature?: string }[] }[]
+      const modelContent = turn2Contents.find(c => c.role === 'model')!
+      expect(modelContent.parts[0]!.thoughtSignature).toBe('SIG_A')
+      expect(modelContent.parts[1]!.thoughtSignature).toBe('SIG_B')
+    })
+
+    it('excludes thought parts (thought: true) from the returned text', async () => {
+      // arrange — response with a thought part followed by a regular text part
+      mockGenerateContent.mockResolvedValue({
+        candidates: [{
+          content: {
+            parts: [
+              { text: 'internal reasoning', thought: true },
+              { text: 'final answer' },
+            ],
+          },
+          finishReason: 'STOP',
+        }],
+        usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 3 },
+      })
+
+      const gemini = new Gemini('gemini-2.5-flash', { apiKey: 'key' })
+      gemini.bindObserver({})
+
+      // act
+      const result = await gemini.invoke([{ role: 'user', content: 'hi' }])
+
+      // assert — only non-thought text included
+      expect(result.text).toBe('final answer')
+    })
+
+    it('uses the API-provided functionCall id when present instead of generating a UUID', async () => {
+      // arrange
+      mockGenerateContent.mockResolvedValue({
+        candidates: [{
+          content: { parts: [{ functionCall: { id: 'api_provided_id', name: 'do_thing', args: { n: 1 } } }] },
+          finishReason: 'STOP',
+        }],
+        usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 2 },
+      })
+
+      const gemini = new Gemini('gemini-2.5-flash', { apiKey: 'key' })
+      gemini.bindObserver({})
+
+      // act
+      const result = await gemini.invoke([{ role: 'user', content: 'go' }])
+
+      // assert — ToolCall.id equals the API-provided id, not a random UUID
+      expect(result.toolCalls[0]?.id).toBe('api_provided_id')
+    })
+
+  })
+
   describe('edge cases', () => {
 
     it('sends contents as empty array when invoke is called with an empty messages array', async () => {

@@ -10,7 +10,7 @@ export interface GeminiOptions {
   apiKey?: string
 }
 
-function translateMessages(messages: Message[]): Content[] {
+function translateMessages(messages: Message[], signatureCache: Map<string, string>): Content[] {
   const result: Content[] = []
   let lastAssistantToolCalls: ToolCall[] | undefined
 
@@ -25,12 +25,14 @@ function translateMessages(messages: Message[]): Content[] {
       }
       if (msg.toolCalls) {
         for (const tc of msg.toolCalls) {
+          const sig = signatureCache.get(tc.id)
           parts.push({
             functionCall: {
               name: tc.name,
               // as: ToolCall.input is unknown; Google SDK args expects Record<string,unknown>
               args: tc.input as Record<string, unknown>,
             },
+            ...(sig !== undefined ? { thoughtSignature: sig } : {}),
           })
         }
       }
@@ -69,16 +71,31 @@ function translateTools(tools: Tool[]): FunctionDeclaration[] {
   })
 }
 
-function normalizeResponse(parts: Part[], finishReason: string | undefined): LLMResponse {
+function normalizeResponse(parts: Part[], finishReason: string | undefined, signatureCache: Map<string, string>): LLMResponse {
   let text = ''
   const toolCalls: ToolCall[] = []
 
+  // Collect any standalone thoughtSignature part (a part with a signature but no functionCall).
+  // Gemini may emit the signature as a separate part preceding the functionCall part.
+  let standaloneSignature: string | undefined
   for (const part of parts) {
-    if ('text' in part && typeof part.text === 'string') {
+    if (part.thoughtSignature !== undefined && part.functionCall === undefined) {
+      standaloneSignature = part.thoughtSignature
+    }
+  }
+
+  for (const part of parts) {
+    if ('text' in part && typeof part.text === 'string' && part.thought !== true) {
       text += part.text
     } else if ('functionCall' in part && part.functionCall !== undefined) {
+      const id = part.functionCall.id ?? randomUUID()
+      // Signature may sit on the same part as the functionCall, or arrive as the standalone part above.
+      const sig = part.thoughtSignature ?? standaloneSignature
+      if (sig !== undefined) {
+        signatureCache.set(id, sig)
+      }
       toolCalls.push({
-        id: randomUUID(),
+        id,
         name: part.functionCall.name ?? '',
         input: part.functionCall.args,
       })
@@ -116,6 +133,8 @@ export class Gemini implements LLM, ObserverAware {
   private readonly modelId: string
   private observer: Observer = {}
   private stepContext: StepContext = ZEROED_STEP_CONTEXT
+  // Keyed by ToolCall.id; survives across turns within the same Gemini instance.
+  private readonly thoughtSignatures = new Map<string, string>()
 
   /**
    * @param model - Gemini model ID, e.g. `'gemini-2.0-flash'`.
@@ -135,7 +154,7 @@ export class Gemini implements LLM, ObserverAware {
   }
 
   async invoke(messages: Message[], options?: { tools?: Tool[] }): Promise<LLMResponse> {
-    const contents = translateMessages(messages)
+    const contents = translateMessages(messages, this.thoughtSignatures)
     const tools = options?.tools
 
     const result = await this.ai.models.generateContent({
@@ -155,7 +174,7 @@ export class Gemini implements LLM, ObserverAware {
     const parts = firstCandidate.content?.parts ?? []
     const finishReason = firstCandidate.finishReason
 
-    const response = normalizeResponse(parts, finishReason)
+    const response = normalizeResponse(parts, finishReason, this.thoughtSignatures)
 
     const usageMetadata = result.usageMetadata
     const event: LLMUsageEvent = {
