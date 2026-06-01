@@ -1,13 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import type { LLM, Message, Tool, ToolCall, LLMResponse, LLMUsageEvent } from '@noetaris/harness-types'
 import type { ObserverAware, Observer, StepContext } from '@noetaris/harness'
-import { GoogleGenerativeAI } from '@google/generative-ai'
-import type {
-  Content,
-  FunctionDeclaration,
-  FunctionDeclarationSchema,
-  Part,
-} from '@google/generative-ai'
+import { GoogleGenAI } from '@google/genai'
+import type { Content, Part, FunctionDeclaration } from '@google/genai'
 
 /** Options for {@link Gemini}. */
 export interface GeminiOptions {
@@ -52,6 +47,7 @@ function translateMessages(messages: Message[]): Content[] {
 
       const last = result[result.length - 1]
       if (last !== undefined && last.role === 'user') {
+        last.parts ??= []
         last.parts.push(responsePart)
       } else {
         result.push({ role: 'user', parts: [responsePart] })
@@ -64,12 +60,10 @@ function translateMessages(messages: Message[]): Content[] {
 
 function translateTools(tools: Tool[]): FunctionDeclaration[] {
   return tools.map((t) => {
-    // as: harness Tool.inputSchema is Record<string,unknown>; SDK's FunctionDeclarationSchema
-    // has required 'type' and 'properties' — at runtime the schema is always a valid object schema
     const decl: FunctionDeclaration = {
       name: t.name,
       description: t.description,
-      parameters: t.inputSchema as unknown as FunctionDeclarationSchema,
+      parametersJsonSchema: t.inputSchema,
     }
     return decl
   })
@@ -85,7 +79,7 @@ function normalizeResponse(parts: Part[], finishReason: string | undefined): LLM
     } else if ('functionCall' in part && part.functionCall !== undefined) {
       toolCalls.push({
         id: randomUUID(),
-        name: part.functionCall.name,
+        name: part.functionCall.name ?? '',
         input: part.functionCall.args,
       })
     }
@@ -106,7 +100,7 @@ function normalizeResponse(parts: Part[], finishReason: string | undefined): LLM
 const ZEROED_STEP_CONTEXT: StepContext = { agentId: '', sessionId: '', stepName: '' }
 
 /**
- * {@link LLM} adapter for the Google Generative AI (Gemini) API.
+ * {@link LLM} adapter for the Google Gen AI (Gemini) API.
  *
  * Implements {@link ObserverAware} — emits an `'llm.response'` event with an
  * `LLMUsageEvent` payload after each successful invocation.
@@ -118,8 +112,7 @@ const ZEROED_STEP_CONTEXT: StepContext = { agentId: '', sessionId: '', stepName:
  * ```
  */
 export class Gemini implements LLM, ObserverAware {
-  // as: GoogleGenerativeAI.getGenerativeModel() returns GenerativeModel which is not exported as a named type
-  private readonly sdkModel: ReturnType<GoogleGenerativeAI['getGenerativeModel']>
+  private readonly ai: GoogleGenAI
   private readonly modelId: string
   private observer: Observer = {}
   private stepContext: StepContext = ZEROED_STEP_CONTEXT
@@ -130,8 +123,7 @@ export class Gemini implements LLM, ObserverAware {
    */
   constructor(model: string, options?: GeminiOptions) {
     this.modelId = model
-    const genAI = new GoogleGenerativeAI(options?.apiKey ?? process.env['GEMINI_API_KEY'] ?? '')
-    this.sdkModel = genAI.getGenerativeModel({ model })
+    this.ai = new GoogleGenAI({ apiKey: options?.apiKey ?? process.env['GEMINI_API_KEY'] ?? '' })
   }
 
   bindObserver(observer: Observer): void {
@@ -146,13 +138,13 @@ export class Gemini implements LLM, ObserverAware {
     const contents = translateMessages(messages)
     const tools = options?.tools
 
-    const sdkResult = await this.sdkModel.generateContent({
+    const result = await this.ai.models.generateContent({
+      model: this.modelId,
       contents,
-      ...(tools !== undefined ? { tools: [{ functionDeclarations: translateTools(tools) }] } : {}),
+      ...(tools !== undefined ? { config: { tools: [{ functionDeclarations: translateTools(tools) }] } } : {}),
     })
 
-    const response = sdkResult.response
-    const candidates = response.candidates
+    const candidates = result.candidates
 
     if (!candidates || candidates.length === 0) {
       throw new Error('Gemini response contained no candidates')
@@ -160,23 +152,23 @@ export class Gemini implements LLM, ObserverAware {
 
     // noUncheckedIndexedAccess: guarded by the length check above
     const firstCandidate = candidates[0] as NonNullable<typeof candidates[0]>
-    const parts = firstCandidate.content.parts
+    const parts = firstCandidate.content?.parts ?? []
     const finishReason = firstCandidate.finishReason
 
-    const result = normalizeResponse(parts, finishReason)
+    const response = normalizeResponse(parts, finishReason)
 
-    const usageMetadata = response.usageMetadata
+    const usageMetadata = result.usageMetadata
     const event: LLMUsageEvent = {
       tokens: {
         input: usageMetadata?.promptTokenCount ?? 0,
         output: usageMetadata?.candidatesTokenCount ?? 0,
       },
       modelId: this.modelId,
-      stopReason: result.stopReason,
+      stopReason: response.stopReason,
       providerName: 'google',
     }
     this.observer.onEvent?.(this.stepContext, 'llm.response', event)
 
-    return result
+    return response
   }
 }

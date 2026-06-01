@@ -5,22 +5,19 @@ import type { StepContext } from '@noetaris/harness'
 // mockGenerateContent is declared in outer scope so the mock factory can close over it
 let mockGenerateContent = vi.fn()
 
-vi.mock('@google/generative-ai', () => {
-  function MockGoogleGenerativeAI() {
-    return {
-      getGenerativeModel: () => ({ generateContent: mockGenerateContent }),
-    }
-  }
-  return { GoogleGenerativeAI: MockGoogleGenerativeAI }
+vi.mock('@google/genai', () => {
+  const MockGoogleGenAI = vi.fn(function (this: { models: unknown }, _opts: unknown) {
+    this.models = { generateContent: (...args: unknown[]) => mockGenerateContent(...args) }
+  })
+  return { GoogleGenAI: MockGoogleGenAI }
 })
 
 import { Gemini } from './gemini.js'
+import { GoogleGenAI } from '@google/genai'
 
 const minimalTextResponse = {
-  response: {
-    candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }],
-    usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 },
-  },
+  candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }],
+  usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 },
 }
 
 beforeEach(() => {
@@ -36,6 +33,20 @@ describe('Gemini', () => {
       expect(() => new Gemini('gemini-1.5-pro', { apiKey: 'test-key' })).not.toThrow()
     })
 
+    it('initializes GoogleGenAI with GEMINI_API_KEY env var when no apiKey option is provided', () => {
+      // arrange
+      process.env['GEMINI_API_KEY'] = 'env-api-key'
+
+      // act
+      new Gemini('gemini-2.0-flash')
+
+      // assert
+      expect(GoogleGenAI).toHaveBeenCalledWith({ apiKey: 'env-api-key' })
+
+      // cleanup
+      delete process.env['GEMINI_API_KEY']
+    })
+
   })
 
   describe('response normalization — text and stopReason', () => {
@@ -43,10 +54,8 @@ describe('Gemini', () => {
     it('returns text response and empty toolCalls when response has a single text part', async () => {
       // arrange
       mockGenerateContent.mockResolvedValue({
-        response: {
-          candidates: [{ content: { parts: [{ text: 'hello back' }] }, finishReason: 'STOP' }],
-          usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 },
-        },
+        candidates: [{ content: { parts: [{ text: 'hello back' }] }, finishReason: 'STOP' }],
+        usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 },
       })
       const gemini = new Gemini('gemini-1.5-pro', { apiKey: 'key' })
       gemini.bindObserver({})
@@ -55,9 +64,10 @@ describe('Gemini', () => {
       const result = await gemini.invoke([{ role: 'user', content: 'hello' }])
 
       // assert
-      expect(mockGenerateContent).toHaveBeenCalledWith({
+      expect(mockGenerateContent).toHaveBeenCalledWith(expect.objectContaining({
+        model: 'gemini-1.5-pro',
         contents: [{ role: 'user', parts: [{ text: 'hello' }] }],
-      })
+      }))
       expect(result.text).toBe('hello back')
       expect(result.toolCalls).toEqual([])
       expect(result.stopReason).toBe('end')
@@ -66,13 +76,11 @@ describe('Gemini', () => {
     it('returns single ToolCall with UUID id and empty text when response has one functionCall part', async () => {
       // arrange
       mockGenerateContent.mockResolvedValue({
-        response: {
-          candidates: [{
-            content: { parts: [{ functionCall: { name: 'get_weather', args: { city: 'Paris' } } }] },
-            finishReason: 'STOP',
-          }],
-          usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 3 },
-        },
+        candidates: [{
+          content: { parts: [{ functionCall: { name: 'get_weather', args: { city: 'Paris' } } }] },
+          finishReason: 'STOP',
+        }],
+        usageMetadata: { promptTokenCount: 8, candidatesTokenCount: 3 },
       })
       const gemini = new Gemini('gemini-1.5-pro', { apiKey: 'key' })
       gemini.bindObserver({})
@@ -85,24 +93,21 @@ describe('Gemini', () => {
       expect(result.toolCalls).toHaveLength(1)
       expect(result.toolCalls[0]?.name).toBe('get_weather')
       expect(result.toolCalls[0]?.input).toEqual({ city: 'Paris' })
-      expect(typeof result.toolCalls[0]?.id).toBe('string')
-      expect(result.toolCalls[0]?.id.length).toBeGreaterThan(0)
+      expect(result.toolCalls[0]?.id).toMatch(/^[0-9a-f-]{36}$/)
       expect(result.stopReason).toBe('tool_use')
     })
 
     it('returns text and one ToolCall when response has both a text part and a functionCall part', async () => {
       // arrange
       mockGenerateContent.mockResolvedValue({
-        response: {
-          candidates: [{
-            content: { parts: [
-              { text: "I'll call a tool" },
-              { functionCall: { name: 'lookup', args: { q: 'x' } } },
-            ]},
-            finishReason: 'STOP',
-          }],
-          usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 6 },
-        },
+        candidates: [{
+          content: { parts: [
+            { text: "I'll call a tool" },
+            { functionCall: { name: 'lookup', args: { q: 'x' } } },
+          ]},
+          finishReason: 'STOP',
+        }],
+        usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 6 },
       })
       const gemini = new Gemini('gemini-1.5-pro', { apiKey: 'key' })
       gemini.bindObserver({})
@@ -120,13 +125,11 @@ describe('Gemini', () => {
     it('concatenates multiple text parts with no separator', async () => {
       // arrange
       mockGenerateContent.mockResolvedValue({
-        response: {
-          candidates: [{
-            content: { parts: [{ text: 'Hello ' }, { text: 'world' }] },
-            finishReason: 'STOP',
-          }],
-          usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 4 },
-        },
+        candidates: [{
+          content: { parts: [{ text: 'Hello ' }, { text: 'world' }] },
+          finishReason: 'STOP',
+        }],
+        usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 4 },
       })
       const gemini = new Gemini('gemini-1.5-pro', { apiKey: 'key' })
       gemini.bindObserver({})
@@ -142,16 +145,14 @@ describe('Gemini', () => {
     it('returns one ToolCall per functionCall part with distinct UUIDs when response has multiple functionCall parts', async () => {
       // arrange
       mockGenerateContent.mockResolvedValue({
-        response: {
-          candidates: [{
-            content: { parts: [
-              { functionCall: { name: 'tool_a', args: { x: 1 } } },
-              { functionCall: { name: 'tool_b', args: { y: 2 } } },
-            ]},
-            finishReason: 'STOP',
-          }],
-          usageMetadata: { promptTokenCount: 12, candidatesTokenCount: 8 },
-        },
+        candidates: [{
+          content: { parts: [
+            { functionCall: { name: 'tool_a', args: { x: 1 } } },
+            { functionCall: { name: 'tool_b', args: { y: 2 } } },
+          ]},
+          finishReason: 'STOP',
+        }],
+        usageMetadata: { promptTokenCount: 12, candidatesTokenCount: 8 },
       })
       const gemini = new Gemini('gemini-1.5-pro', { apiKey: 'key' })
       gemini.bindObserver({})
@@ -165,6 +166,8 @@ describe('Gemini', () => {
       expect(result.toolCalls[0]?.input).toEqual({ x: 1 })
       expect(result.toolCalls[1]?.name).toBe('tool_b')
       expect(result.toolCalls[1]?.input).toEqual({ y: 2 })
+      expect(result.toolCalls[0]?.id).toMatch(/^[0-9a-f-]{36}$/)
+      expect(result.toolCalls[1]?.id).toMatch(/^[0-9a-f-]{36}$/)
       expect(result.toolCalls[0]?.id).not.toBe(result.toolCalls[1]?.id)
       expect(result.stopReason).toBe('tool_use')
     })
@@ -172,13 +175,11 @@ describe('Gemini', () => {
     it('returns stopReason "max_tokens" when finishReason is "MAX_TOKENS" and no functionCall parts', async () => {
       // arrange
       mockGenerateContent.mockResolvedValue({
-        response: {
-          candidates: [{
-            content: { parts: [{ text: 'partial response' }] },
-            finishReason: 'MAX_TOKENS',
-          }],
-          usageMetadata: { promptTokenCount: 20, candidatesTokenCount: 100 },
-        },
+        candidates: [{
+          content: { parts: [{ text: 'partial response' }] },
+          finishReason: 'MAX_TOKENS',
+        }],
+        usageMetadata: { promptTokenCount: 20, candidatesTokenCount: 100 },
       })
       const gemini = new Gemini('gemini-1.5-pro', { apiKey: 'key' })
       gemini.bindObserver({})
@@ -194,13 +195,11 @@ describe('Gemini', () => {
     it('returns stopReason "end" when finishReason is an unrecognized value and no functionCall parts', async () => {
       // arrange
       mockGenerateContent.mockResolvedValue({
-        response: {
-          candidates: [{
-            content: { parts: [{ text: 'blocked' }] },
-            finishReason: 'SAFETY',
-          }],
-          usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 1 },
-        },
+        candidates: [{
+          content: { parts: [{ text: 'blocked' }] },
+          finishReason: 'SAFETY',
+        }],
+        usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 1 },
       })
       const gemini = new Gemini('gemini-1.5-pro', { apiKey: 'key' })
       gemini.bindObserver({})
@@ -216,7 +215,7 @@ describe('Gemini', () => {
 
   describe('message and tool translation', () => {
 
-    it('translates tools array into a single GeminiTool with functionDeclarations', async () => {
+    it('translates tools array into config.tools with functionDeclarations using parametersJsonSchema', async () => {
       // arrange
       const gemini = new Gemini('gemini-1.5-pro', { apiKey: 'key' })
       gemini.bindObserver({})
@@ -230,10 +229,9 @@ describe('Gemini', () => {
       await gemini.invoke([{ role: 'user', content: 'go' }], { tools })
 
       // assert
-      expect(mockGenerateContent).toHaveBeenCalledWith({
-        contents: expect.any(Array),
-        tools: [{ functionDeclarations: [{ name: 'search', description: 'search the web', parameters: { type: 'object', properties: { q: { type: 'string' } } } }] }],
-      })
+      expect(mockGenerateContent).toHaveBeenCalledWith(expect.objectContaining({
+        config: { tools: [{ functionDeclarations: [{ name: 'search', description: 'search the web', parametersJsonSchema: { type: 'object', properties: { q: { type: 'string' } } } }] }] },
+      }))
     })
 
     it('translates assistant message with toolCalls-only into model content with only functionCall parts', async () => {
@@ -324,7 +322,7 @@ describe('Gemini', () => {
       })
     })
 
-    it('omits tools field from SDK call when invoke is called without options', async () => {
+    it('omits config field from SDK call when invoke is called without options', async () => {
       // arrange
       const gemini = new Gemini('gemini-1.5-pro', { apiKey: 'key' })
       gemini.bindObserver({})
@@ -333,10 +331,9 @@ describe('Gemini', () => {
       await gemini.invoke([{ role: 'user', content: 'hi' }])
 
       // assert
-      expect(mockGenerateContent).toHaveBeenCalledWith({ contents: [{ role: 'user', parts: [{ text: 'hi' }] }] })
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       const callArg = mockGenerateContent.mock.calls[0]![0]
-      expect('tools' in callArg).toBe(false)
+      expect('config' in callArg).toBe(false)
     })
 
     it('groups two consecutive tool messages into a single user content with two functionResponse parts', async () => {
@@ -404,10 +401,8 @@ describe('Gemini', () => {
     it('calls observer.onEvent with correct StepContext, event type, and payload after successful invoke', async () => {
       // arrange
       mockGenerateContent.mockResolvedValue({
-        response: {
-          candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }],
-          usageMetadata: { promptTokenCount: 15, candidatesTokenCount: 7 },
-        },
+        candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }],
+        usageMetadata: { promptTokenCount: 15, candidatesTokenCount: 7 },
       })
       const gemini = new Gemini('gemini-1.5-pro', { apiKey: 'key' })
       const observer = { onEvent: vi.fn() }
@@ -477,9 +472,7 @@ describe('Gemini', () => {
     it('emits tokens.input 0 and tokens.output 0 when usageMetadata is absent', async () => {
       // arrange
       mockGenerateContent.mockResolvedValue({
-        response: {
-          candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }],
-        },
+        candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }],
       })
       const gemini = new Gemini('gemini-1.5-pro', { apiKey: 'key' })
       const observer = { onEvent: vi.fn() }
@@ -533,11 +526,24 @@ describe('Gemini', () => {
     it('throws with message "Gemini response contained no candidates" and does not call observer.onEvent when candidates is empty', async () => {
       // arrange
       mockGenerateContent.mockResolvedValue({
-        response: {
-          candidates: [],
-          usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 0 },
-        },
+        candidates: [],
+        usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 0 },
       })
+      const gemini = new Gemini('gemini-1.5-pro', { apiKey: 'key' })
+      const observer = { onEvent: vi.fn() }
+      gemini.bindObserver(observer)
+
+      // act
+      const act = () => gemini.invoke([{ role: 'user', content: 'hi' }])
+
+      // assert
+      await expect(act()).rejects.toThrow('Gemini response contained no candidates')
+      expect(observer.onEvent).not.toHaveBeenCalled()
+    })
+
+    it('throws with message "Gemini response contained no candidates" and does not call observer.onEvent when candidates is absent', async () => {
+      // arrange
+      mockGenerateContent.mockResolvedValue({ usageMetadata: {} })
       const gemini = new Gemini('gemini-1.5-pro', { apiKey: 'key' })
       const observer = { onEvent: vi.fn() }
       gemini.bindObserver(observer)
@@ -563,7 +569,7 @@ describe('Gemini', () => {
       await gemini.invoke([])
 
       // assert
-      expect(mockGenerateContent).toHaveBeenCalledWith({ contents: [] })
+      expect(mockGenerateContent).toHaveBeenCalledWith(expect.objectContaining({ contents: [] }))
     })
 
     it('uses the second observer when bindObserver is called twice', async () => {
