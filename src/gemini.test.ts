@@ -414,7 +414,6 @@ describe('Gemini', () => {
       await gemini.invoke([{ role: 'user', content: 'hi' }])
 
       // assert
-      expect(observer.onEvent).toHaveBeenCalledOnce()
       expect(observer.onEvent).toHaveBeenCalledWith(
         { agentId: 'ag1', sessionId: 's1', stepName: 'step1' },
         'llm.response',
@@ -493,7 +492,7 @@ describe('Gemini', () => {
 
   describe('error propagation', () => {
 
-    it('propagates API error unchanged and does not call observer.onEvent', async () => {
+    it('propagates API error unchanged and does not emit llm.response', async () => {
       // arrange
       const apiError = new Error('API key not valid')
       mockGenerateContent.mockRejectedValue(apiError)
@@ -507,7 +506,8 @@ describe('Gemini', () => {
       // assert
       await expect(rejected).rejects.toThrow('API key not valid')
       await expect(rejected).rejects.toBe(apiError)
-      expect(observer.onEvent).not.toHaveBeenCalled()
+      const eventTypes = observer.onEvent.mock.calls.map((c: unknown[]) => c[1])
+      expect(eventTypes).not.toContain('llm.response')
     })
 
     it('propagates network error unchanged when generateContent rejects', async () => {
@@ -523,7 +523,7 @@ describe('Gemini', () => {
       await expect(act()).rejects.toBe(netError)
     })
 
-    it('throws with message "Gemini response contained no candidates" and does not call observer.onEvent when candidates is empty', async () => {
+    it('throws with message "Gemini response contained no candidates" and does not emit llm.response when candidates is empty', async () => {
       // arrange
       mockGenerateContent.mockResolvedValue({
         candidates: [],
@@ -538,10 +538,11 @@ describe('Gemini', () => {
 
       // assert
       await expect(act()).rejects.toThrow('Gemini response contained no candidates')
-      expect(observer.onEvent).not.toHaveBeenCalled()
+      const eventTypes = observer.onEvent.mock.calls.map((c: unknown[]) => c[1])
+      expect(eventTypes).not.toContain('llm.response')
     })
 
-    it('throws with message "Gemini response contained no candidates" and does not call observer.onEvent when candidates is absent', async () => {
+    it('throws with message "Gemini response contained no candidates" and does not emit llm.response when candidates is absent', async () => {
       // arrange
       mockGenerateContent.mockResolvedValue({ usageMetadata: {} })
       const gemini = new Gemini('gemini-1.5-pro', { apiKey: 'key' })
@@ -553,7 +554,8 @@ describe('Gemini', () => {
 
       // assert
       await expect(act()).rejects.toThrow('Gemini response contained no candidates')
-      expect(observer.onEvent).not.toHaveBeenCalled()
+      const eventTypes = observer.onEvent.mock.calls.map((c: unknown[]) => c[1])
+      expect(eventTypes).not.toContain('llm.response')
     })
 
   })
@@ -966,13 +968,65 @@ describe('Gemini', () => {
       const result = await gemini.invoke([{ role: 'user', content: 'hi' }])
 
       // assert
-      expect(observer.onEvent).toHaveBeenCalledOnce()
       expect(observer.onEvent).toHaveBeenCalledWith(
         expect.any(Object),
         'llm.response',
         expect.objectContaining({ modelId: 'gemini-2.0-flash', providerName: 'google', stopReason: 'end', tokens: { input: 10, output: 20 } }),
       )
       expect(result.text).toBe('result text')
+    })
+
+  })
+
+  describe('"llm.request" emission', () => {
+
+    it('emits "llm.request" with modelId and providerName: "google" before ai.models.generateContent', async () => {
+      // arrange
+      const mockObserver = { onEvent: vi.fn() }
+      const adapter = new Gemini('gemini-2.0-flash')
+      adapter.bindObserver(mockObserver)
+
+      // act
+      await adapter.invoke([{ role: 'user', content: 'hello' }])
+
+      // assert
+      expect(mockObserver.onEvent.mock.calls[0]?.[1]).toBe('llm.request')
+      expect(mockObserver.onEvent.mock.calls[0]?.[2]).toEqual({ modelId: 'gemini-2.0-flash', providerName: 'google' })
+      expect(mockGenerateContent).toHaveBeenCalledOnce()
+      expect(mockObserver.onEvent.mock.invocationCallOrder[0] ?? 0).toBeLessThan(mockGenerateContent.mock.invocationCallOrder[0] ?? 0)
+    })
+
+    it('emits "llm.request" before "llm.response" on success; no optional content fields', async () => {
+      // arrange
+      const mockObserver = { onEvent: vi.fn() }
+      const adapter = new Gemini('gemini-2.0-flash')
+      adapter.bindObserver(mockObserver)
+
+      // act
+      await adapter.invoke([{ role: 'user', content: 'hi' }])
+
+      // assert
+      expect(mockObserver.onEvent).toHaveBeenCalledTimes(2)
+      expect(mockObserver.onEvent.mock.calls[0]?.[1]).toBe('llm.request')
+      expect(mockObserver.onEvent.mock.calls[1]?.[1]).toBe('llm.response')
+      expect(mockObserver.onEvent.mock.calls[0]?.[2]).not.toHaveProperty('messages')
+      expect(mockObserver.onEvent.mock.calls[0]?.[2]).not.toHaveProperty('tools')
+      expect(mockObserver.onEvent.mock.calls[1]?.[2]).not.toHaveProperty('output')
+    })
+
+    it('emits "llm.request" before SDK throw and does not emit "llm.response" on error', async () => {
+      // arrange
+      mockGenerateContent.mockRejectedValue(new Error('QuotaExceeded'))
+      const mockObserver = { onEvent: vi.fn() }
+      const adapter = new Gemini('gemini-2.0-flash')
+      adapter.bindObserver(mockObserver)
+
+      // act
+      await expect(adapter.invoke([{ role: 'user', content: 'hi' }])).rejects.toThrow('QuotaExceeded')
+
+      // assert
+      expect(mockObserver.onEvent).toHaveBeenCalledTimes(1)
+      expect(mockObserver.onEvent.mock.calls[0]?.[1]).toBe('llm.request')
     })
 
   })
@@ -1003,7 +1057,7 @@ describe('Gemini', () => {
       await gemini.invoke([{ role: 'user', content: 'hi' }])
 
       // assert
-      expect(observer2.onEvent).toHaveBeenCalledOnce()
+      expect(observer2.onEvent).toHaveBeenCalled()
       expect(observer1.onEvent).not.toHaveBeenCalled()
     })
 

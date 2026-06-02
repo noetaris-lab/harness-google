@@ -152,7 +152,6 @@ describe('MockGemini', () => {
       await mock.invoke([])
 
       // assert
-      expect(onEvent).toHaveBeenCalledOnce()
       expect(onEvent).toHaveBeenCalledWith(ctx, 'llm.response', { tokens: { input: 0, output: 0 }, modelId: 'mock', stopReason: 'end', providerName: 'mock' })
     })
 
@@ -251,7 +250,7 @@ describe('MockGemini', () => {
 
       // assert
       expect(onEvent1).not.toHaveBeenCalled()
-      expect(onEvent2).toHaveBeenCalledOnce()
+      expect(onEvent2).toHaveBeenCalled()
     })
 
     it('returns configured response and sets lastMessages to empty array when invoked with empty messages', async () => {
@@ -280,6 +279,39 @@ describe('MockGemini', () => {
 
       // assert
       await expect(p).rejects.toThrow(MockGeminiEmptyQueueError)
+    })
+
+  })
+
+  describe('Group 7: "llm.request" emission', () => {
+
+    it('emits "llm.request" with modelId: "mock" and providerName: "mock" before dequeue', async () => {
+      // arrange
+      const response: LLMResponse = { text: 'hi', toolCalls: [], stopReason: 'end' }
+      const adapter = new MockGemini(response)
+      const mockObserver = { onEvent: vi.fn() }
+      adapter.bindObserver(mockObserver)
+
+      // act
+      await adapter.invoke([])
+
+      // assert
+      expect(mockObserver.onEvent.mock.calls[0]?.[1]).toBe('llm.request')
+      expect(mockObserver.onEvent.mock.calls[0]?.[2]).toEqual({ modelId: 'mock', providerName: 'mock' })
+    })
+
+    it('emits "llm.request" before MockGeminiEmptyQueueError throw and does not emit "llm.response"', async () => {
+      // arrange
+      const adapter = new MockGemini()
+      const mockObserver = { onEvent: vi.fn() }
+      adapter.bindObserver(mockObserver)
+
+      // act
+      await expect(adapter.invoke([])).rejects.toThrow(MockGeminiEmptyQueueError)
+
+      // assert
+      expect(mockObserver.onEvent).toHaveBeenCalledTimes(1)
+      expect(mockObserver.onEvent.mock.calls[0]?.[1]).toBe('llm.request')
     })
 
   })

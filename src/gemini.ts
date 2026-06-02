@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { LLM, Message, Tool, ToolCall, LLMResponse, LLMUsageEvent } from '@noetaris/harness-types'
+import type { LLM, Message, Tool, ToolCall, LLMResponse, LLMUsageEvent, LLMRequestEvent } from '@noetaris/harness-types'
 import type { ObserverAware, Observer, StepContext } from '@noetaris/harness'
 import { GoogleGenAI } from '@google/genai'
 import type { Content, Part, FunctionDeclaration } from '@google/genai'
@@ -202,6 +202,9 @@ export class Gemini implements LLM, ObserverAware {
           ...(hasThinkingConfig ? { thinkingConfig: this.options!.thinkingConfig } : {}),
         }
       : undefined
+
+    const requestEvent: LLMRequestEvent = { modelId: this.modelId, providerName: 'google' }
+    this.observer.onEvent?.(this.stepContext, 'llm.request', requestEvent)
 
     const result = await this.ai.models.generateContent({
       model: this.modelId,
