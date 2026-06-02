@@ -8,6 +8,33 @@ import type { Content, Part, FunctionDeclaration } from '@google/genai'
 export interface GeminiOptions {
   /** Google AI API key. Defaults to the `GEMINI_API_KEY` environment variable. */
   apiKey?: string
+  /**
+   * Sampling temperature. Higher values produce more varied output.
+   * When absent, the provider default applies.
+   */
+  temperature?: number
+  /**
+   * Maximum number of tokens to generate.
+   * When absent, the provider default applies.
+   */
+  maxTokens?: number
+  /**
+   * Top-p nucleus sampling probability.
+   * When absent, the provider default applies.
+   */
+  topP?: number
+  /**
+   * Top-k sampling — number of highest-probability tokens considered.
+   * When absent, the provider default applies.
+   */
+  topK?: number
+  /**
+   * Thinking configuration for models that support extended reasoning.
+   * When present, enables the thinking feature with the specified token budget.
+   */
+  thinkingConfig?: {
+    thinkingBudget: number
+  }
 }
 
 function translateMessages(messages: Message[], signatureCache: Map<string, string>): Content[] {
@@ -131,6 +158,7 @@ const ZEROED_STEP_CONTEXT: StepContext = { agentId: '', sessionId: '', stepName:
 export class Gemini implements LLM, ObserverAware {
   private readonly ai: GoogleGenAI
   private readonly modelId: string
+  private readonly options?: GeminiOptions
   private observer: Observer = {}
   private stepContext: StepContext = ZEROED_STEP_CONTEXT
   // Keyed by ToolCall.id; survives across turns within the same Gemini instance.
@@ -138,10 +166,11 @@ export class Gemini implements LLM, ObserverAware {
 
   /**
    * @param model - Gemini model ID, e.g. `'gemini-2.0-flash'`.
-   * @param options - Optional API key override.
+   * @param options - Optional configuration including API key and generation params.
    */
   constructor(model: string, options?: GeminiOptions) {
     this.modelId = model
+    this.options = options
     this.ai = new GoogleGenAI({ apiKey: options?.apiKey ?? process.env['GEMINI_API_KEY'] ?? '' })
   }
 
@@ -157,10 +186,27 @@ export class Gemini implements LLM, ObserverAware {
     const contents = translateMessages(messages, this.thoughtSignatures)
     const tools = options?.tools
 
+    const generationConfig: Record<string, unknown> = {}
+    if (this.options?.temperature !== undefined) generationConfig['temperature'] = this.options.temperature
+    if (this.options?.maxTokens !== undefined) generationConfig['maxOutputTokens'] = this.options.maxTokens
+    if (this.options?.topP !== undefined) generationConfig['topP'] = this.options.topP
+    if (this.options?.topK !== undefined) generationConfig['topK'] = this.options.topK
+    const hasGenerationConfig = Object.keys(generationConfig).length > 0
+    const hasThinkingConfig = this.options?.thinkingConfig !== undefined
+    const hasTools = tools !== undefined
+
+    const config = hasTools || hasGenerationConfig || hasThinkingConfig
+      ? {
+          ...(hasTools ? { tools: [{ functionDeclarations: translateTools(tools!) }] } : {}),
+          ...(hasGenerationConfig ? { generationConfig } : {}),
+          ...(hasThinkingConfig ? { thinkingConfig: this.options!.thinkingConfig } : {}),
+        }
+      : undefined
+
     const result = await this.ai.models.generateContent({
       model: this.modelId,
       contents,
-      ...(tools !== undefined ? { config: { tools: [{ functionDeclarations: translateTools(tools) }] } } : {}),
+      ...(config !== undefined ? { config } : {}),
     })
 
     const candidates = result.candidates

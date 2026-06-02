@@ -763,6 +763,220 @@ describe('Gemini', () => {
 
   })
 
+  describe('generation params — config omission', () => {
+
+    it('omits config from generateContent when no params and no tools are provided', async () => {
+      // arrange
+      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'test-key' })
+
+      // act
+      await gemini.invoke([{ role: 'user', content: 'hi' }])
+
+      // assert
+      expect(mockGenerateContent).toHaveBeenCalledOnce()
+      expect(mockGenerateContent).toHaveBeenCalledWith(expect.not.objectContaining({ config: expect.anything() }))
+    })
+
+  })
+
+  describe('generation params — individual param forwarding', () => {
+
+    it('maps maxTokens to maxOutputTokens in generationConfig', async () => {
+      // arrange
+      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'test-key', maxTokens: 2048 })
+
+      // act
+      await gemini.invoke([{ role: 'user', content: 'hi' }])
+
+      // assert
+      expect(mockGenerateContent).toHaveBeenCalledWith(expect.objectContaining({ config: { generationConfig: { maxOutputTokens: 2048 } } }))
+    })
+
+    it('forwards temperature in generationConfig', async () => {
+      // arrange
+      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'test-key', temperature: 0.5 })
+
+      // act
+      await gemini.invoke([{ role: 'user', content: 'hi' }])
+
+      // assert
+      expect(mockGenerateContent).toHaveBeenCalledWith(expect.objectContaining({ config: { generationConfig: { temperature: 0.5 } } }))
+    })
+
+    it('forwards topP in generationConfig', async () => {
+      // arrange
+      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'test-key', topP: 0.95 })
+
+      // act
+      await gemini.invoke([{ role: 'user', content: 'hi' }])
+
+      // assert
+      expect(mockGenerateContent).toHaveBeenCalledWith(expect.objectContaining({ config: { generationConfig: { topP: 0.95 } } }))
+    })
+
+    it('forwards topK in generationConfig', async () => {
+      // arrange
+      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'test-key', topK: 40 })
+
+      // act
+      await gemini.invoke([{ role: 'user', content: 'hi' }])
+
+      // assert
+      expect(mockGenerateContent).toHaveBeenCalledWith(expect.objectContaining({ config: { generationConfig: { topK: 40 } } }))
+    })
+
+    it('places thinkingConfig at the top level of config (not inside generationConfig)', async () => {
+      // arrange
+      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'test-key', thinkingConfig: { thinkingBudget: 1024 } })
+
+      // act
+      await gemini.invoke([{ role: 'user', content: 'hi' }])
+
+      // assert
+      expect(mockGenerateContent).toHaveBeenCalledWith(expect.objectContaining({ config: { thinkingConfig: { thinkingBudget: 1024 } } }))
+      expect(mockGenerateContent.mock.calls[0]![0]).not.toHaveProperty('config.generationConfig')
+    })
+
+  })
+
+  describe('generation params — composite config', () => {
+
+    it('includes all scalar params and thinkingConfig in one config when all params are set', async () => {
+      // arrange
+      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'test-key', temperature: 0.7, maxTokens: 512, topP: 0.9, topK: 20, thinkingConfig: { thinkingBudget: 500 } })
+
+      // act
+      await gemini.invoke([{ role: 'user', content: 'hi' }])
+
+      // assert
+      expect(mockGenerateContent).toHaveBeenCalledWith(expect.objectContaining({
+        config: {
+          generationConfig: { temperature: 0.7, maxOutputTokens: 512, topP: 0.9, topK: 20 },
+          thinkingConfig: { thinkingBudget: 500 },
+        },
+      }))
+    })
+
+    it('merges tools, generationConfig, and thinkingConfig into a single config object', async () => {
+      // arrange
+      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'test-key', temperature: 0.5, thinkingConfig: { thinkingBudget: 256 } })
+      const tool: Tool = { name: 'get_weather', description: 'Gets weather', inputSchema: { type: 'object', properties: { location: { type: 'string' } }, required: ['location'] } }
+
+      // act
+      await gemini.invoke([{ role: 'user', content: 'hi' }], { tools: [tool] })
+
+      // assert
+      expect(mockGenerateContent).toHaveBeenCalledOnce()
+      const callArg = mockGenerateContent.mock.calls[0]![0] as { config: Record<string, unknown> }
+      expect(callArg.config).toHaveProperty('tools')
+      expect(callArg.config).toHaveProperty('generationConfig.temperature', 0.5)
+      expect(callArg.config).toHaveProperty('thinkingConfig.thinkingBudget', 256)
+    })
+
+  })
+
+  describe('generation params — explicit undefined suppression', () => {
+
+    it('excludes temperature from generationConfig when explicitly set to undefined', async () => {
+      // arrange
+      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'test-key', temperature: undefined })
+
+      // act
+      await gemini.invoke([{ role: 'user', content: 'hi' }])
+
+      // assert
+      expect(mockGenerateContent).toHaveBeenCalledWith(expect.not.objectContaining({ config: expect.anything() }))
+    })
+
+    it('excludes thinkingConfig from config when explicitly set to undefined', async () => {
+      // arrange
+      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'test-key', thinkingConfig: undefined })
+
+      // act
+      await gemini.invoke([{ role: 'user', content: 'hi' }])
+
+      // assert
+      expect(mockGenerateContent).toHaveBeenCalledWith(expect.not.objectContaining({ config: expect.anything() }))
+    })
+
+    it('excludes maxOutputTokens from generationConfig when maxTokens is explicitly undefined', async () => {
+      // arrange
+      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'test-key', maxTokens: undefined })
+
+      // act
+      await gemini.invoke([{ role: 'user', content: 'hi' }])
+
+      // assert
+      expect(mockGenerateContent).toHaveBeenCalledWith(expect.not.objectContaining({ config: expect.anything() }))
+    })
+
+    it('excludes topP from generationConfig when explicitly set to undefined', async () => {
+      // arrange
+      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'test-key', topP: undefined })
+
+      // act
+      await gemini.invoke([{ role: 'user', content: 'hi' }])
+
+      // assert
+      expect(mockGenerateContent).toHaveBeenCalledWith(expect.not.objectContaining({ config: expect.anything() }))
+    })
+
+    it('excludes topK from generationConfig when explicitly set to undefined', async () => {
+      // arrange
+      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'test-key', topK: undefined })
+
+      // act
+      await gemini.invoke([{ role: 'user', content: 'hi' }])
+
+      // assert
+      expect(mockGenerateContent).toHaveBeenCalledWith(expect.not.objectContaining({ config: expect.anything() }))
+    })
+
+    it('includes only tools in config when no generation params are set but tools are provided', async () => {
+      // arrange
+      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'test-key' })
+      const tool: Tool = { name: 'ping', description: 'Pings a host', inputSchema: { type: 'object', properties: {}, required: [] } }
+
+      // act
+      await gemini.invoke([{ role: 'user', content: 'hi' }], { tools: [tool] })
+
+      // assert
+      expect(mockGenerateContent).toHaveBeenCalledOnce()
+      const callArg = mockGenerateContent.mock.calls[0]![0] as { config: Record<string, unknown> }
+      expect(callArg).toHaveProperty('config')
+      expect(callArg.config).toHaveProperty('tools')
+      expect(callArg.config).not.toHaveProperty('generationConfig')
+    })
+
+  })
+
+  describe('generation params — observer event', () => {
+
+    it('emits llm.response observer event with correct shape when generation params are set', async () => {
+      // arrange
+      mockGenerateContent.mockResolvedValue({
+        candidates: [{ content: { parts: [{ text: 'result text' }] }, finishReason: 'STOP', usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 20 } }],
+        usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 20 },
+      })
+      const observer = { onEvent: vi.fn() }
+      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'test-key', temperature: 0.8, maxTokens: 256 })
+      gemini.bindObserver(observer)
+
+      // act
+      const result = await gemini.invoke([{ role: 'user', content: 'hi' }])
+
+      // assert
+      expect(observer.onEvent).toHaveBeenCalledOnce()
+      expect(observer.onEvent).toHaveBeenCalledWith(
+        expect.any(Object),
+        'llm.response',
+        expect.objectContaining({ modelId: 'gemini-2.0-flash', providerName: 'google', stopReason: 'end', tokens: { input: 10, output: 20 } }),
+      )
+      expect(result.text).toBe('result text')
+    })
+
+  })
+
   describe('edge cases', () => {
 
     it('sends contents as empty array when invoke is called with an empty messages array', async () => {
