@@ -98,7 +98,7 @@ function translateTools(tools: Tool[]): FunctionDeclaration[] {
   })
 }
 
-function normalizeResponse(parts: Part[], finishReason: string | undefined, signatureCache: Map<string, string>): LLMResponse {
+function normalizeResponse(parts: Part[], finishReason: string | undefined, signatureCache: Map<string, string>): Omit<LLMResponse, 'usage'> {
   let text = ''
   const toolCalls: ToolCall[] = []
 
@@ -141,6 +141,7 @@ function normalizeResponse(parts: Part[], finishReason: string | undefined, sign
   return { text, toolCalls, stopReason }
 }
 
+
 const ZEROED_STEP_CONTEXT: StepContext = { agentId: '', sessionId: '', stepName: '' }
 
 /**
@@ -158,11 +159,13 @@ const ZEROED_STEP_CONTEXT: StepContext = { agentId: '', sessionId: '', stepName:
 export class Gemini implements LLM, ObserverAware {
   private readonly ai: GoogleGenAI
   private readonly modelId: string
-  private readonly options?: GeminiOptions
+  private readonly options: GeminiOptions | undefined
   private observer: Observer = {}
   private stepContext: StepContext = ZEROED_STEP_CONTEXT
   // Keyed by ToolCall.id; survives across turns within the same Gemini instance.
   private readonly thoughtSignatures = new Map<string, string>()
+  private contextWindowSize: number | undefined = undefined
+  private contextWindowFetched = false
 
   /**
    * @param model - Gemini model ID, e.g. `'gemini-2.0-flash'`.
@@ -172,6 +175,17 @@ export class Gemini implements LLM, ObserverAware {
     this.modelId = model
     this.options = options
     this.ai = new GoogleGenAI({ apiKey: options?.apiKey ?? process.env['GEMINI_API_KEY'] ?? '' })
+  }
+
+  private async fetchContextWindow(): Promise<void> {
+    try {
+      const response = await this.ai.models.get({ model: this.modelId })
+      this.contextWindowSize = response.inputTokenLimit
+    } catch {
+      // silent: suppress to avoid leaking API key metadata from SDK error messages
+    } finally {
+      this.contextWindowFetched = true
+    }
   }
 
   bindObserver(observer: Observer): void {
@@ -185,6 +199,10 @@ export class Gemini implements LLM, ObserverAware {
   async invoke(messages: Message[], options?: { tools?: Tool[] }): Promise<LLMResponse> {
     const contents = translateMessages(messages, this.thoughtSignatures)
     const tools = options?.tools
+
+    if (!this.contextWindowFetched) {
+      await this.fetchContextWindow()
+    }
 
     const generationConfig: Record<string, unknown> = {}
     if (this.options?.temperature !== undefined) generationConfig['temperature'] = this.options.temperature
@@ -223,20 +241,31 @@ export class Gemini implements LLM, ObserverAware {
     const parts = firstCandidate.content?.parts ?? []
     const finishReason = firstCandidate.finishReason
 
-    const response = normalizeResponse(parts, finishReason, this.thoughtSignatures)
+    const normalized = normalizeResponse(parts, finishReason, this.thoughtSignatures)
+    const contextWindowSize = this.contextWindowSize
 
     const usageMetadata = result.usageMetadata
+    const llmResponse: LLMResponse = {
+      ...normalized,
+      usage: {
+        inputTokens: usageMetadata?.promptTokenCount ?? 0,
+        outputTokens: usageMetadata?.candidatesTokenCount ?? 0,
+        ...(contextWindowSize !== undefined ? { contextWindowSize } : {}),
+      },
+    }
+
     const event: LLMUsageEvent = {
       tokens: {
         input: usageMetadata?.promptTokenCount ?? 0,
         output: usageMetadata?.candidatesTokenCount ?? 0,
       },
       modelId: this.modelId,
-      stopReason: response.stopReason,
+      stopReason: llmResponse.stopReason,
       providerName: 'google',
+      ...(contextWindowSize !== undefined ? { contextWindowSize } : {}),
     }
     this.observer.onEvent?.(this.stepContext, 'llm.response', event)
 
-    return response
+    return llmResponse
   }
 }

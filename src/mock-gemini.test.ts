@@ -17,7 +17,7 @@ describe('MockGemini', () => {
 
     it('construction with single LLMResponse does not throw', () => {
       // arrange
-      const r1: LLMResponse = { text: 'hello', toolCalls: [], stopReason: 'end' }
+      const r1: LLMResponse = { text: 'hello', toolCalls: [], stopReason: 'end', usage: { inputTokens: 0, outputTokens: 0 } }
 
       // act
       const mock = new MockGemini(r1)
@@ -32,7 +32,7 @@ describe('MockGemini', () => {
 
     it('returns same response on every call when constructed with single response', async () => {
       // arrange
-      const r1: LLMResponse = { text: 'only', toolCalls: [], stopReason: 'end' }
+      const r1: LLMResponse = { text: 'only', toolCalls: [], stopReason: 'end', usage: { inputTokens: 0, outputTokens: 0 } }
       const mock = new MockGemini(r1)
       const msgs: Message[] = [{ role: 'user', content: 'hi' }]
 
@@ -49,9 +49,9 @@ describe('MockGemini', () => {
 
     it('drains queue FIFO then sticks to last element', async () => {
       // arrange
-      const r1: LLMResponse = { text: 'first', toolCalls: [], stopReason: 'end' }
-      const r2: LLMResponse = { text: 'second', toolCalls: [], stopReason: 'end' }
-      const r3: LLMResponse = { text: 'third', toolCalls: [], stopReason: 'end' }
+      const r1: LLMResponse = { text: 'first', toolCalls: [], stopReason: 'end', usage: { inputTokens: 0, outputTokens: 0 } }
+      const r2: LLMResponse = { text: 'second', toolCalls: [], stopReason: 'end', usage: { inputTokens: 0, outputTokens: 0 } }
+      const r3: LLMResponse = { text: 'third', toolCalls: [], stopReason: 'end', usage: { inputTokens: 0, outputTokens: 0 } }
       const mock = new MockGemini([r1, r2, r3])
       const msgs: Message[] = []
 
@@ -68,8 +68,8 @@ describe('MockGemini', () => {
 
     it('returns last element repeatedly after queue is exhausted', async () => {
       // arrange
-      const r1: LLMResponse = { text: 'first', toolCalls: [], stopReason: 'end' }
-      const r2: LLMResponse = { text: 'second', toolCalls: [], stopReason: 'end' }
+      const r1: LLMResponse = { text: 'first', toolCalls: [], stopReason: 'end', usage: { inputTokens: 0, outputTokens: 0 } }
+      const r2: LLMResponse = { text: 'second', toolCalls: [], stopReason: 'end', usage: { inputTokens: 0, outputTokens: 0 } }
       const mock = new MockGemini([r1, r2])
       const msgs: Message[] = []
 
@@ -93,7 +93,7 @@ describe('MockGemini', () => {
     it('enqueue after empty construction makes invoke succeed', async () => {
       // arrange
       const mock = new MockGemini()
-      const r1: LLMResponse = { text: 'late', toolCalls: [], stopReason: 'end' }
+      const r1: LLMResponse = { text: 'late', toolCalls: [], stopReason: 'end', usage: { inputTokens: 0, outputTokens: 0 } }
       mock.enqueue(r1)
 
       // act
@@ -105,9 +105,9 @@ describe('MockGemini', () => {
 
     it('enqueue array after construction preserves correct merged order', async () => {
       // arrange
-      const r1: LLMResponse = { text: 'a', toolCalls: [], stopReason: 'end' }
-      const r2: LLMResponse = { text: 'b', toolCalls: [], stopReason: 'end' }
-      const r3: LLMResponse = { text: 'c', toolCalls: [], stopReason: 'end' }
+      const r1: LLMResponse = { text: 'a', toolCalls: [], stopReason: 'end', usage: { inputTokens: 0, outputTokens: 0 } }
+      const r2: LLMResponse = { text: 'b', toolCalls: [], stopReason: 'end', usage: { inputTokens: 0, outputTokens: 0 } }
+      const r3: LLMResponse = { text: 'c', toolCalls: [], stopReason: 'end', usage: { inputTokens: 0, outputTokens: 0 } }
       const mock = new MockGemini([r1])
       mock.enqueue([r2, r3])
 
@@ -124,7 +124,7 @@ describe('MockGemini', () => {
 
     it('enqueue with single non-array LLMResponse is treated as one-element array', async () => {
       // arrange
-      const r1: LLMResponse = { text: 'scalar', toolCalls: [], stopReason: 'end' }
+      const r1: LLMResponse = { text: 'scalar', toolCalls: [], stopReason: 'end', usage: { inputTokens: 0, outputTokens: 0 } }
       const mock = new MockGemini()
       mock.enqueue(r1)
 
@@ -141,7 +141,7 @@ describe('MockGemini', () => {
 
     it('emits llm.response event with correct payload after invoke', async () => {
       // arrange
-      const r1: LLMResponse = { text: 'ok', toolCalls: [], stopReason: 'end' }
+      const r1: LLMResponse = { text: 'ok', toolCalls: [], stopReason: 'end', usage: { inputTokens: 0, outputTokens: 0 } }
       const mock = new MockGemini(r1)
       const onEvent = vi.fn()
       mock.bindObserver({ onEvent })
@@ -157,7 +157,7 @@ describe('MockGemini', () => {
 
     it('uses StepContext from setStepContext as first arg to onEvent', async () => {
       // arrange
-      const r1: LLMResponse = { text: 'ok', toolCalls: [], stopReason: 'end' }
+      const r1: LLMResponse = { text: 'ok', toolCalls: [], stopReason: 'end', usage: { inputTokens: 0, outputTokens: 0 } }
       const mock = new MockGemini(r1)
       const onEvent = vi.fn()
       mock.bindObserver({ onEvent })
@@ -174,7 +174,7 @@ describe('MockGemini', () => {
 
     it('uses default StepContext when setStepContext is never called', async () => {
       // arrange
-      const r1: LLMResponse = { text: 'ok', toolCalls: [], stopReason: 'end' }
+      const r1: LLMResponse = { text: 'ok', toolCalls: [], stopReason: 'end', usage: { inputTokens: 0, outputTokens: 0 } }
       const mock = new MockGemini(r1)
       const onEvent = vi.fn()
       mock.bindObserver({ onEvent })
@@ -189,7 +189,7 @@ describe('MockGemini', () => {
 
     it('does not throw when observer has no onEvent method', async () => {
       // arrange
-      const r1: LLMResponse = { text: 'ok', toolCalls: [], stopReason: 'end' }
+      const r1: LLMResponse = { text: 'ok', toolCalls: [], stopReason: 'end', usage: { inputTokens: 0, outputTokens: 0 } }
       const mock = new MockGemini(r1)
       mock.bindObserver({})
 
@@ -199,7 +199,7 @@ describe('MockGemini', () => {
 
     it('stopReason in observer event reflects the response stopReason', async () => {
       // arrange
-      const r1: LLMResponse = { text: '', toolCalls: [{ id: 'c1', name: 'fn', input: {} }], stopReason: 'tool_use' }
+      const r1: LLMResponse = { text: '', toolCalls: [{ id: 'c1', name: 'fn', input: {} }], stopReason: 'tool_use', usage: { inputTokens: 0, outputTokens: 0 } }
       const mock = new MockGemini(r1)
       const onEvent = vi.fn()
       mock.bindObserver({ onEvent })
@@ -218,7 +218,7 @@ describe('MockGemini', () => {
 
     it('lastMessages is updated to messages arg after each invoke', async () => {
       // arrange
-      const r1: LLMResponse = { text: 'ok', toolCalls: [], stopReason: 'end' }
+      const r1: LLMResponse = { text: 'ok', toolCalls: [], stopReason: 'end', usage: { inputTokens: 0, outputTokens: 0 } }
       const mock = new MockGemini(r1)
       const msgs1: Message[] = [{ role: 'user', content: 'hello' }]
       const msgs2: Message[] = [{ role: 'user', content: 'hello' }, { role: 'assistant', content: 'hi' }]
@@ -238,7 +238,7 @@ describe('MockGemini', () => {
 
     it('only the most recently bound observer fires after bindObserver called multiple times', async () => {
       // arrange
-      const r1: LLMResponse = { text: 'ok', toolCalls: [], stopReason: 'end' }
+      const r1: LLMResponse = { text: 'ok', toolCalls: [], stopReason: 'end', usage: { inputTokens: 0, outputTokens: 0 } }
       const mock = new MockGemini(r1)
       const onEvent1 = vi.fn()
       const onEvent2 = vi.fn()
@@ -255,7 +255,7 @@ describe('MockGemini', () => {
 
     it('returns configured response and sets lastMessages to empty array when invoked with empty messages', async () => {
       // arrange
-      const r1: LLMResponse = { text: 'ok', toolCalls: [], stopReason: 'end' }
+      const r1: LLMResponse = { text: 'ok', toolCalls: [], stopReason: 'end', usage: { inputTokens: 0, outputTokens: 0 } }
       const mock = new MockGemini(r1)
 
       // act
@@ -287,7 +287,7 @@ describe('MockGemini', () => {
 
     it('emits "llm.request" with modelId: "mock" and providerName: "mock" before dequeue', async () => {
       // arrange
-      const response: LLMResponse = { text: 'hi', toolCalls: [], stopReason: 'end' }
+      const response: LLMResponse = { text: 'hi', toolCalls: [], stopReason: 'end', usage: { inputTokens: 0, outputTokens: 0 } }
       const adapter = new MockGemini(response)
       const mockObserver = { onEvent: vi.fn() }
       adapter.bindObserver(mockObserver)
