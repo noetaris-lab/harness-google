@@ -877,11 +877,11 @@ describe('Gemini', () => {
 
   })
 
-  describe('generation params — explicit undefined suppression', () => {
+  describe('generation params — absent options suppression', () => {
 
-    it('excludes temperature from generationConfig when explicitly set to undefined', async () => {
+    it('excludes temperature from generationConfig when omitted', async () => {
       // arrange
-      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'test-key', temperature: undefined })
+      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'test-key' })
 
       // act
       await gemini.invoke([{ role: 'user', content: 'hi' }])
@@ -890,9 +890,9 @@ describe('Gemini', () => {
       expect(mockGenerateContent).toHaveBeenCalledWith(expect.not.objectContaining({ config: expect.anything() }))
     })
 
-    it('excludes thinkingConfig from config when explicitly set to undefined', async () => {
+    it('excludes thinkingConfig from config when omitted', async () => {
       // arrange
-      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'test-key', thinkingConfig: undefined })
+      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'test-key' })
 
       // act
       await gemini.invoke([{ role: 'user', content: 'hi' }])
@@ -901,9 +901,9 @@ describe('Gemini', () => {
       expect(mockGenerateContent).toHaveBeenCalledWith(expect.not.objectContaining({ config: expect.anything() }))
     })
 
-    it('excludes maxOutputTokens from generationConfig when maxTokens is explicitly undefined', async () => {
+    it('excludes maxOutputTokens from generationConfig when maxTokens is omitted', async () => {
       // arrange
-      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'test-key', maxTokens: undefined })
+      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'test-key' })
 
       // act
       await gemini.invoke([{ role: 'user', content: 'hi' }])
@@ -912,9 +912,9 @@ describe('Gemini', () => {
       expect(mockGenerateContent).toHaveBeenCalledWith(expect.not.objectContaining({ config: expect.anything() }))
     })
 
-    it('excludes topP from generationConfig when explicitly set to undefined', async () => {
+    it('excludes topP from generationConfig when omitted', async () => {
       // arrange
-      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'test-key', topP: undefined })
+      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'test-key' })
 
       // act
       await gemini.invoke([{ role: 'user', content: 'hi' }])
@@ -923,9 +923,9 @@ describe('Gemini', () => {
       expect(mockGenerateContent).toHaveBeenCalledWith(expect.not.objectContaining({ config: expect.anything() }))
     })
 
-    it('excludes topK from generationConfig when explicitly set to undefined', async () => {
+    it('excludes topK from generationConfig when omitted', async () => {
       // arrange
-      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'test-key', topK: undefined })
+      const gemini = new Gemini('gemini-2.0-flash', { apiKey: 'test-key' })
 
       // act
       await gemini.invoke([{ role: 'user', content: 'hi' }])
